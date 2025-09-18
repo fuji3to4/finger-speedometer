@@ -1,36 +1,70 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+Finger Speedometer (MediaPipe Hands)
+===================================
 
-## Getting Started
+人差し指の先（ランドマーク #8）の速度を計測して表示するミニアプリです。MediaPipe Tasks (HandLandmarker) を使用し、カメラ映像上に手のランドマークと速度HUDを重畳表示します。
 
-First, run the development server:
+機能
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+- カメラプレビュー + ランドマーク描画
+- worldLandmarks を用いた 3D 空間上の速度 [m/s] 推定（人差し指先端）
+- 最高速度の記録
+- Start / Stop / Reset ボタン
+
+要件
+
+- Node.js 20 以上推奨
+- ブラウザのカメラ使用許可（HTTPS 環境推奨）
+
+セットアップ
+
+```powershell
+npm ci
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+開発サーバー
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```powershell
+npm run dev
+# http://localhost:3000 を開く
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+ビルド（静的出力）
+本プロジェクトは Next.js の `output: "export"` を使用しています。
 
-## Learn More
+```powershell
+npm run export  # out/ に静的出力が生成されます
+```
 
-To learn more about Next.js, take a look at the following resources:
+GitHub Pages（自動デプロイ）
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+- `.github/workflows/deploy-gh-pages.yml` により、master/main への push で自動ビルド/配信
+- Actions 内で `NEXT_PUBLIC_BASE_PATH=/<repo名>` を設定してサブパス配信に対応
+- GitHub リポジトリ → Settings → Pages → Source: GitHub Actions を選択
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+実装メモ
 
-## Deploy on Vercel
+- 座標系
+  - `result.landmarks` は画像座標の正規化（x:幅基準, y:高さ基準, z:幅基準）
+  - `result.worldLandmarks` はメートル単位の3D（相対スケール）。速度計算はこれを使用
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+- 速度 [m/s]
+  - 連続フレームの world 座標差分を dt で割って算出（指数平均で fps を平滑化）
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- パフォーマンス
+  - ループは requestAnimationFrame
+  - 毎フレームの描画値は useRef に保持して再レンダ抑制
+
+既知の注意点
+
+- 初回はブラウザからカメラアクセス許可が求められます
+- 照明や背景コントラストが低いと検出が不安定になります
+- worldLandmarks の絶対スケールはカメラ環境に依存します（相対比較に有用）
+
+主なファイル
+
+- `app/components/FingerSpeed.tsx` … コアの検出/描画/速度計算ロジック
+- `app/page.tsx` … シンプルなUIを構成
+
+ライセンス
+
+- このプロジェクトは学習/検証目的のサンプルです。必要に応じて追記してください。
