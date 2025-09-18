@@ -1,10 +1,12 @@
 {
   "name": "finger-speedometer",
   "version": "0.1.0",
-  "private": true,
+  "private": false,
   "scripts": {
     "dev": "next dev --turbopack",
     "build": "next build --turbopack",
+  "export": "next build --turbopack",
+  "deploy:gh-pages": "rimraf ./out && npm run export",
     "start": "next start",
     "lint": "eslint"
   },
@@ -22,6 +24,7 @@
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "15.5.3",
+    "rimraf": "^6.0.1",
     "tailwindcss": "^4",
     "typescript": "^5"
   }

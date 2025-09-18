@@ -16,26 +16,26 @@ export default function FingerSpeed() {
     const canvasRef = useRef<HTMLCanvasElement | null>(null)
     const ctxRef = useRef<CanvasRenderingContext2D | null>(null)
 
-    // MediaPipe Tasks instances
+    // MediaPipe / runtime
     const landmarkerRef = useRef<HandLandmarker | null>(null)
     const drawingRef = useRef<DrawingUtils | null>(null)
     const rafRef = useRef<number | null>(null)
     const lastLogRef = useRef<number>(0)
-    const logIntervalMs = 1000 // 出力間隔
+    const logIntervalMs = 1000
 
     // UI/state
     const [running, setRunning] = useState(false)
-    const [normSpeed, setNormSpeed] = useState(0)
-    const [pxSpeed, setPxSpeed] = useState(0)
-    const [maxNorm, setMaxNorm] = useState(0)
-    const [maxPx, setMaxPx] = useState(0)
-    const [fps, setFps] = useState(0)
-    const [indexXYZ, setIndexXYZ] = useState<XYZ | null>(null) // 最新の人差し指先端
+
+    // フレーム毎に更新される値は state ではなく ref に保持（再レンダ不要）
+    const fpsRef = useRef(0)
+    const normSpeedRef = useRef(0)
+    const pxSpeedRef = useRef(0)
+    const maxNormRef = useRef(0)
+    const maxPxRef = useRef(0)
+    const indexXYZRef = useRef<XYZ | null>(null)
 
     // 前フレーム情報
-    const last = useRef<{ t: number; x: number; y: number; z: number } | null>(
-        null
-    )
+    const last = useRef<{ t: number; x: number; y: number; z: number } | null>(null)
 
     const detectLoop = useCallback(() => {
         const canvas = canvasRef.current
@@ -99,7 +99,7 @@ export default function FingerSpeed() {
 
             // 正規化座標 (0..1) と z を取得
             const p = lm[8] as XYZ
-            setIndexXYZ({ x: p.x, y: p.y, z: p.z })
+            indexXYZRef.current = { x: p.x, y: p.y, z: p.z }
 
             // FPS 推定
             const prev = last.current
@@ -107,11 +107,11 @@ export default function FingerSpeed() {
                 const dt = (now - prev.t) / 1000
                 if (dt > 0) {
                     const instFps = 1 / dt
-                    setFps((f) => f * (1 - FPS_SMOOTH) + instFps * FPS_SMOOTH)
+                    fpsRef.current = fpsRef.current * (1 - FPS_SMOOTH) + instFps * FPS_SMOOTH
                 }
             }
 
-            // 速度計算（正規化単位/秒 → px/秒換算）
+            // 速度計算（正規化/秒 → px/秒）
             if (prev) {
                 const dx = p.x - prev.x
                 const dy = p.y - prev.y
@@ -120,12 +120,12 @@ export default function FingerSpeed() {
                 const dt = (now - prev.t) / 1000
                 if (dt > 0) {
                     const vNorm = distNorm / dt
-                    setNormSpeed(vNorm)
-                    setMaxNorm((m) => (vNorm > m ? vNorm : m))
+                    normSpeedRef.current = vNorm
+                    maxNormRef.current = Math.max(maxNormRef.current, vNorm)
 
                     const vPx = vNorm * Math.hypot(canvas.width, canvas.height)
-                    setPxSpeed(vPx)
-                    setMaxPx((m) => (vPx > m ? vPx : m))
+                    pxSpeedRef.current = vPx
+                    maxPxRef.current = Math.max(maxPxRef.current, vPx)
                 }
             }
 
@@ -143,7 +143,14 @@ export default function FingerSpeed() {
             last.current = null
         }
 
-        // HUD
+        // HUD（ref から値を読む）
+        const fps = fpsRef.current
+        const normSpeed = normSpeedRef.current
+        const pxSpeed = pxSpeedRef.current
+        const maxNorm = maxNormRef.current
+        const maxPx = maxPxRef.current
+        const indexXYZ = indexXYZRef.current
+
         ctx.fillStyle = "rgba(0,0,0,0.4)"
         ctx.fillRect(10, 10, 360, 130)
         ctx.fillStyle = "#e6ecff"
@@ -151,11 +158,7 @@ export default function FingerSpeed() {
         ctx.fillText(`FPS: ${fps.toFixed(1)}`, 20, 36)
         ctx.fillText(`Speed (norm): ${normSpeed.toFixed(3)} /s`, 20, 60)
         ctx.fillText(`Speed (px/s): ${pxSpeed.toFixed(0)}`, 20, 84)
-        ctx.fillText(
-            `Max (norm): ${maxNorm.toFixed(3)} | Max (px/s): ${maxPx.toFixed(0)}`,
-            20,
-            108
-        )
+        ctx.fillText(`Max (norm): ${maxNorm.toFixed(3)} | Max (px/s): ${maxPx.toFixed(0)}`, 20, 108)
         if (indexXYZ) {
             ctx.fillText(
                 `Index (x,y,z): ${indexXYZ.x.toFixed(3)}, ${indexXYZ.y.toFixed(3)}, ${indexXYZ.z.toFixed(3)}`,
@@ -167,13 +170,22 @@ export default function FingerSpeed() {
         ctx.restore()
 
         rafRef.current = requestAnimationFrame(detectLoop)
-    }, [fps, normSpeed, pxSpeed, maxNorm, maxPx, indexXYZ])
+    }, []) // 依存なしで安定化（描画値は ref から取得）
 
     const init = useCallback(async () => {
         if (running) return
         const video = videoRef.current!
         const canvas = canvasRef.current!
         ctxRef.current = canvas.getContext("2d")
+
+        // 開始時にメトリクスをリセット
+        fpsRef.current = 0
+        normSpeedRef.current = 0
+        pxSpeedRef.current = 0
+        maxNormRef.current = 0
+        maxPxRef.current = 0
+        indexXYZRef.current = null
+        last.current = null
 
         // WASM とモデルをCDNからロード
         const vision = await FilesetResolver.forVisionTasks(
@@ -186,8 +198,8 @@ export default function FingerSpeed() {
             },
             numHands: 1,
             runningMode: "VIDEO",
-        minHandDetectionConfidence: 0.6,
-        minTrackingConfidence: 0.6,
+            minHandDetectionConfidence: 0.6,
+            minTrackingConfidence: 0.6,
         })
         landmarkerRef.current = handLandmarker
 
@@ -212,52 +224,76 @@ export default function FingerSpeed() {
 
         setRunning(true)
         detectLoop()
-    }, [detectLoop, running])
+    }, [running, detectLoop])
+
+    // Stop/Disconnect
+    const stop = useCallback(() => {
+        if (rafRef.current) {
+            cancelAnimationFrame(rafRef.current)
+            rafRef.current = null
+        }
+        landmarkerRef.current?.close?.()
+        landmarkerRef.current = null
+        const videoEl = videoRef.current
+        const stream = videoEl?.srcObject as MediaStream | undefined
+        stream?.getTracks().forEach((t) => t.stop())
+        if (videoEl) videoEl.srcObject = null
+        setRunning(false)
+        last.current = null
+
+        // 画面もクリア
+        const ctx = ctxRef.current
+        const canvas = canvasRef.current
+        if (ctx && canvas) ctx.clearRect(0, 0, canvas.width, canvas.height)
+    }, [])
 
     const reset = () => {
-        setMaxNorm(0)
-        setMaxPx(0)
+        maxNormRef.current = 0
+        maxPxRef.current = 0
     }
 
     // クリーンアップ
     useEffect(() => {
-        const videoEl = videoRef.current
         return () => {
-            if (rafRef.current) cancelAnimationFrame(rafRef.current)
-            landmarkerRef.current?.close?.()
-            const stream = videoEl?.srcObject as MediaStream | undefined
-            stream?.getTracks().forEach((t) => t.stop())
+            stop()
         }
-    }, [])
+    }, [stop])
 
     return (
-            <>
-                <div className="grid gap-3">
-                    <div className="flex items-center gap-3">
+        <>
+            <div className="grid gap-3">
+                <div className="flex items-center gap-3">
                     <button
                         onClick={init}
                         disabled={running}
-                            className="py-2 px-3.5 rounded-xl border border-[#2a3358] bg-[#172041] text-[#e6ecff]"
+                        className="py-2 px-3.5 rounded-xl border border-[#2a3358] bg-[#172041] text-[#e6ecff]"
                     >
                         {running ? "Running…" : "Start Camera"}
                     </button>
                     <button
+                        onClick={stop}
+                        disabled={!running}
+                        className="py-2 px-3.5 rounded-xl border border-[#2a3358] bg-[#172041] text-[#e6ecff]"
+                    >
+                        Stop Camera
+                    </button>
+                    <button
                         onClick={reset}
-                            className="py-2 px-3.5 rounded-xl border border-[#2a3358] bg-[#172041] text-[#e6ecff]"
+                        className="py-2 px-3.5 rounded-xl border border-[#2a3358] bg-[#172041] text-[#e6ecff]"
                     >
                         Reset Highscore
                     </button>
                 </div>
 
-                    <div className="relative w-full max-w-[960px]">
-                        <video ref={videoRef} autoPlay playsInline muted className="hidden" />
+                <div className="relative w-full max-w-[960px]">
+                    <video ref={videoRef} autoPlay playsInline muted className="hidden" />
                     <canvas
                         ref={canvasRef}
-                            className="w-full rounded-2xl shadow-[0_8px_24px_rgba(0,0,0,0.35)]"
+                        className="w-full rounded-2xl shadow-[0_8px_24px_rgba(0,0,0,0.35)]"
                     />
                 </div>
 
-                    <p className="opacity-80">
+                <p className="opacity-80">
                     提示: 画面中央で手をはっきり映してから、素早く動かして最高速を狙ってください。背景コントラストが高いほど検出が安定します。
                 </p>
             </div>
