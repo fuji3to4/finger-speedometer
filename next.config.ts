@@ -5,7 +5,7 @@ import type { NextConfig } from "next"
 const repo = process.env.NEXT_PUBLIC_BASE_PATH?.trim()
 
 const nextConfig: NextConfig = {
-  output: "export", // 静的サイト出力
+  // output: "export", // 静的サイト出力
   images: { unoptimized: true }, // 画像最適化を無効（静的出力と相性のため）
   // GitHub Pages のサブパス配信に対応（例: /finger-speedometer）
   basePath: repo && repo !== "/" ? repo : undefined,

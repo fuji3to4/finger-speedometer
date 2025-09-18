@@ -28,14 +28,14 @@ export default function FingerSpeed() {
 
     // フレーム毎に更新される値は state ではなく ref に保持（再レンダ不要）
     const fpsRef = useRef(0)
-    const normSpeedRef = useRef(0)
-    const pxSpeedRef = useRef(0)
-    const maxNormRef = useRef(0)
-    const maxPxRef = useRef(0)
+    // worldLandmarks（m 単位）での速度
+    const worldSpeedRef = useRef(0)
+    const maxWorldRef = useRef(0)
     const indexXYZRef = useRef<XYZ | null>(null)
 
     // 前フレーム情報
     const last = useRef<{ t: number; x: number; y: number; z: number } | null>(null)
+    const lastWorld = useRef<{ t: number; x: number; y: number; z: number } | null>(null)
 
     const detectLoop = useCallback(() => {
         const canvas = canvasRef.current
@@ -60,7 +60,8 @@ export default function FingerSpeed() {
 
         const now = performance.now()
         const result = landmarker.detectForVideo(video, now)
-        const lm: NormalizedLandmark[] | undefined = result.landmarks?.[0]
+    const lm: NormalizedLandmark[] | undefined = result.landmarks?.[0]
+    const wlm: { x: number; y: number; z: number }[] | undefined = result.worldLandmarks?.[0]
 
         // 定期ログ（毎 logIntervalMs ミリ秒）
         if (now - lastLogRef.current > logIntervalMs) {
@@ -77,7 +78,7 @@ export default function FingerSpeed() {
             lastLogRef.current = now
         }
 
-        if (lm && lm[8]) {
+    if (lm && lm[8]) {
             // ランドマーク描画
             if (!drawingRef.current) drawingRef.current = new DrawingUtils(ctx)
             try {
@@ -97,7 +98,7 @@ export default function FingerSpeed() {
                 // DrawingUtils API 互換が無い環境でも落ちないように
             }
 
-            // 正規化座標 (0..1) と z を取得
+            // 正規化座標 (0..1) と z を取得（描画用）
             const p = lm[8] as XYZ
             indexXYZRef.current = { x: p.x, y: p.y, z: p.z }
 
@@ -111,22 +112,23 @@ export default function FingerSpeed() {
                 }
             }
 
-            // 速度計算（正規化/秒 → px/秒）
-            if (prev) {
-                const dx = p.x - prev.x
-                const dy = p.y - prev.y
-                const dz = p.z - prev.z
-                const distNorm = Math.hypot(dx, dy, dz)
-                const dt = (now - prev.t) / 1000
-                if (dt > 0) {
-                    const vNorm = distNorm / dt
-                    normSpeedRef.current = vNorm
-                    maxNormRef.current = Math.max(maxNormRef.current, vNorm)
-
-                    const vPx = vNorm * Math.hypot(canvas.width, canvas.height)
-                    pxSpeedRef.current = vPx
-                    maxPxRef.current = Math.max(maxPxRef.current, vPx)
+            // 速度計算（worldLandmarks：m/s）
+            if (wlm && wlm[8]) {
+                const prevW = lastWorld.current
+                const pw = wlm[8]
+                const dt = prevW ? (now - prevW.t) / 1000 : 0
+                if (prevW && dt > 0) {
+                    const dx = pw.x - prevW.x
+                    const dy = pw.y - prevW.y
+                    const dz = pw.z - prevW.z
+                    const distM = Math.hypot(dx, dy, dz) // meters
+                    const vMps = distM / dt
+                    worldSpeedRef.current = vMps
+                    maxWorldRef.current = Math.max(maxWorldRef.current, vMps)
                 }
+                lastWorld.current = { t: now, x: pw.x, y: pw.y, z: pw.z }
+            } else {
+                lastWorld.current = null
             }
 
             last.current = { t: now, x: p.x, y: p.y, z: p.z }
@@ -143,12 +145,10 @@ export default function FingerSpeed() {
             last.current = null
         }
 
-        // HUD（ref から値を読む）
+    // HUD（ref から値を読む）
         const fps = fpsRef.current
-        const normSpeed = normSpeedRef.current
-        const pxSpeed = pxSpeedRef.current
-        const maxNorm = maxNormRef.current
-        const maxPx = maxPxRef.current
+    const worldSpeed = worldSpeedRef.current
+    const maxWorld = maxWorldRef.current
         const indexXYZ = indexXYZRef.current
 
         ctx.fillStyle = "rgba(0,0,0,0.4)"
@@ -156,9 +156,8 @@ export default function FingerSpeed() {
         ctx.fillStyle = "#e6ecff"
         ctx.font = "16px system-ui, sans-serif"
         ctx.fillText(`FPS: ${fps.toFixed(1)}`, 20, 36)
-        ctx.fillText(`Speed (norm): ${normSpeed.toFixed(3)} /s`, 20, 60)
-        ctx.fillText(`Speed (px/s): ${pxSpeed.toFixed(0)}`, 20, 84)
-        ctx.fillText(`Max (norm): ${maxNorm.toFixed(3)} | Max (px/s): ${maxPx.toFixed(0)}`, 20, 108)
+    ctx.fillText(`Speed (m/s): ${worldSpeed.toFixed(3)}`, 20, 60)
+    ctx.fillText(`Max (m/s): ${maxWorld.toFixed(3)}`, 20, 84)
         if (indexXYZ) {
             ctx.fillText(
                 `Index (x,y,z): ${indexXYZ.x.toFixed(3)}, ${indexXYZ.y.toFixed(3)}, ${indexXYZ.z.toFixed(3)}`,
@@ -178,14 +177,13 @@ export default function FingerSpeed() {
         const canvas = canvasRef.current!
         ctxRef.current = canvas.getContext("2d")
 
-        // 開始時にメトリクスをリセット
-        fpsRef.current = 0
-        normSpeedRef.current = 0
-        pxSpeedRef.current = 0
-        maxNormRef.current = 0
-        maxPxRef.current = 0
-        indexXYZRef.current = null
-        last.current = null
+    // 開始時にメトリクスをリセット
+    fpsRef.current = 0
+    worldSpeedRef.current = 0
+    maxWorldRef.current = 0
+    indexXYZRef.current = null
+    last.current = null
+    lastWorld.current = null
 
         // WASM とモデルをCDNからロード
         const vision = await FilesetResolver.forVisionTasks(
@@ -248,8 +246,7 @@ export default function FingerSpeed() {
     }, [])
 
     const reset = () => {
-        maxNormRef.current = 0
-        maxPxRef.current = 0
+        maxWorldRef.current = 0
     }
 
     // クリーンアップ
