@@ -21,7 +21,7 @@ export default function FingerSpeed() {
     const drawingRef = useRef<DrawingUtils | null>(null)
     const rafRef = useRef<number | null>(null)
     const lastLogRef = useRef<number>(0)
-    const logIntervalMs = 1000
+    const logIntervalMs = 10000
 
     // UI/state
     const [running, setRunning] = useState(false)
