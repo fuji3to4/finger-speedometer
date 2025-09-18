@@ -5,6 +5,8 @@
   "scripts": {
     "dev": "next dev --turbopack",
     "build": "next build --turbopack",
+  "export": "next build --turbopack",
+  "deploy:gh-pages": "rimraf ./out && npm run export",
     "start": "next start",
     "lint": "eslint"
   },
