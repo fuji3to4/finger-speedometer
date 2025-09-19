@@ -29,6 +29,11 @@ export default function FingerSpeed() {
 
     // UI/state
     const [running, setRunning] = useState(false)
+    const [mirror, setMirror] = useState(false)
+    const mirrorRef = useRef(false)
+    useEffect(() => {
+        mirrorRef.current = mirror
+    }, [mirror])
 
     // フレーム毎に更新される値は state ではなく ref に保持（再レンダ不要）
     const fpsRef = useRef(0)
@@ -59,9 +64,14 @@ export default function FingerSpeed() {
             canvas.height = video.videoHeight
         }
 
-        // 背景にカメラフレーム描画
+        // 背景にカメラフレーム描画（必要ならミラー変換）
         ctx.save()
         ctx.clearRect(0, 0, canvas.width, canvas.height)
+        ctx.save()
+        if (mirrorRef.current) {
+            ctx.translate(canvas.width, 0)
+            ctx.scale(-1, 1)
+        }
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
 
         const now = performance.now()
@@ -84,7 +94,7 @@ export default function FingerSpeed() {
             lastLogRef.current = now
         }
 
-        if (lm && lm[8]) {
+    if (lm && lm[8]) {
             // ランドマーク描画
             if (!drawingRef.current) drawingRef.current = new DrawingUtils(ctx)
             try {
@@ -200,6 +210,8 @@ export default function FingerSpeed() {
         } else {
             last.current = null
         }
+        // ミラー変換を解除してから HUD を描画
+        ctx.restore()
 
         // HUD（ref から値を読む）
         const fps = fpsRef.current
@@ -336,6 +348,15 @@ export default function FingerSpeed() {
                     >
                         Reset Highscore
                     </button>
+                    <label className="inline-flex items-center gap-2 select-none text-[#e6ecff] ml-2">
+                        <input
+                            type="checkbox"
+                            checked={mirror}
+                            onChange={(e) => setMirror(e.target.checked)}
+                            className="accent-[#21d19f] h-4 w-4"
+                        />
+                        Mirror
+                    </label>
                 </div>
 
                 <div className="relative w-full max-w-[960px]">
