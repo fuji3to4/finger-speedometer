@@ -10,6 +10,10 @@ import {
 type XYZ = { x: number; y: number; z: number }
 
 const FPS_SMOOTH = 0.25 // EMA smoothing for fps estimate
+const VEL_SMOOTH = 0.3 // EMA smoothing for 2D velocity (screen space)
+const ARROW_TIME = 0.08 // seconds of motion represented by arrow length
+const ARROW_MIN = 6 // px
+const ARROW_MAX = 160 // px
 
 export default function FingerSpeed() {
     const videoRef = useRef<HTMLVideoElement | null>(null)
@@ -32,6 +36,8 @@ export default function FingerSpeed() {
     const worldSpeedRef = useRef(0)
     const maxWorldRef = useRef(0)
     const indexXYZRef = useRef<XYZ | null>(null)
+    // 2D スクリーン空間の速度ベクトル（px/s）
+    const vel2DRef = useRef<{ vx: number; vy: number }>({ vx: 0, vy: 0 })
 
     // 前フレーム情報
     const last = useRef<{ t: number; x: number; y: number; z: number } | null>(null)
@@ -60,8 +66,8 @@ export default function FingerSpeed() {
 
         const now = performance.now()
         const result = landmarker.detectForVideo(video, now)
-    const lm: NormalizedLandmark[] | undefined = result.landmarks?.[0]
-    const wlm: { x: number; y: number; z: number }[] | undefined = result.worldLandmarks?.[0]
+        const lm: NormalizedLandmark[] | undefined = result.landmarks?.[0]
+        const wlm: { x: number; y: number; z: number }[] | undefined = result.worldLandmarks?.[0]
 
         // 定期ログ（毎 logIntervalMs ミリ秒）
         if (now - lastLogRef.current > logIntervalMs) {
@@ -78,7 +84,7 @@ export default function FingerSpeed() {
             lastLogRef.current = now
         }
 
-    if (lm && lm[8]) {
+        if (lm && lm[8]) {
             // ランドマーク描画
             if (!drawingRef.current) drawingRef.current = new DrawingUtils(ctx)
             try {
@@ -141,14 +147,64 @@ export default function FingerSpeed() {
             ctx.lineWidth = 3
             ctx.strokeStyle = "#21d19f"
             ctx.stroke()
+
+            // 2D 速度ベクトル（px/s）を算出・平滑化
+            if (prev) {
+                const dt2 = (now - prev.t) / 1000
+                if (dt2 > 0) {
+                    const vx = ((p.x - prev.x) * canvas.width) / dt2
+                    const vy = ((p.y - prev.y) * canvas.height) / dt2
+                    vel2DRef.current.vx =
+                        vel2DRef.current.vx * (1 - VEL_SMOOTH) + vx * VEL_SMOOTH
+                    vel2DRef.current.vy =
+                        vel2DRef.current.vy * (1 - VEL_SMOOTH) + vy * VEL_SMOOTH
+                }
+            }
+
+            // 矢印で速度ベクトルを可視化
+            {
+                const { vx, vy } = vel2DRef.current
+                let dx = vx * ARROW_TIME
+                let dy = vy * ARROW_TIME
+                let len = Math.hypot(dx, dy)
+                if (len >= ARROW_MIN) {
+                    if (len > ARROW_MAX) {
+                        const k = ARROW_MAX / len
+                        dx *= k
+                        dy *= k
+                        len = ARROW_MAX
+                    }
+                    const tx = cx + dx
+                    const ty = cy + dy
+                    // 本体
+                    ctx.beginPath()
+                    ctx.moveTo(cx, cy)
+                    ctx.lineTo(tx, ty)
+                    ctx.lineWidth = 4
+                    ctx.strokeStyle = "#ff5e5b"
+                    ctx.stroke()
+                    // 矢印ヘッド
+                    const angle = Math.atan2(dy, dx)
+                    const head = 12
+                    const a1 = angle + Math.PI * 0.85
+                    const a2 = angle - Math.PI * 0.85
+                    ctx.beginPath()
+                    ctx.moveTo(tx, ty)
+                    ctx.lineTo(tx + Math.cos(a1) * head, ty + Math.sin(a1) * head)
+                    ctx.moveTo(tx, ty)
+                    ctx.lineTo(tx + Math.cos(a2) * head, ty + Math.sin(a2) * head)
+                    ctx.lineWidth = 3
+                    ctx.stroke()
+                }
+            }
         } else {
             last.current = null
         }
 
-    // HUD（ref から値を読む）
+        // HUD（ref から値を読む）
         const fps = fpsRef.current
-    const worldSpeed = worldSpeedRef.current
-    const maxWorld = maxWorldRef.current
+        const worldSpeed = worldSpeedRef.current
+        const maxWorld = maxWorldRef.current
         const indexXYZ = indexXYZRef.current
 
         ctx.fillStyle = "rgba(0,0,0,0.4)"
@@ -156,8 +212,8 @@ export default function FingerSpeed() {
         ctx.fillStyle = "#e6ecff"
         ctx.font = "16px system-ui, sans-serif"
         ctx.fillText(`FPS: ${fps.toFixed(1)}`, 20, 36)
-    ctx.fillText(`Speed (m/s): ${worldSpeed.toFixed(3)}`, 20, 60)
-    ctx.fillText(`Max (m/s): ${maxWorld.toFixed(3)}`, 20, 84)
+        ctx.fillText(`Speed (m/s): ${worldSpeed.toFixed(3)}`, 20, 60)
+        ctx.fillText(`Max (m/s): ${maxWorld.toFixed(3)}`, 20, 84)
         if (indexXYZ) {
             ctx.fillText(
                 `Index (x,y,z): ${indexXYZ.x.toFixed(3)}, ${indexXYZ.y.toFixed(3)}, ${indexXYZ.z.toFixed(3)}`,
@@ -177,13 +233,13 @@ export default function FingerSpeed() {
         const canvas = canvasRef.current!
         ctxRef.current = canvas.getContext("2d")
 
-    // 開始時にメトリクスをリセット
-    fpsRef.current = 0
-    worldSpeedRef.current = 0
-    maxWorldRef.current = 0
-    indexXYZRef.current = null
-    last.current = null
-    lastWorld.current = null
+        // 開始時にメトリクスをリセット
+        fpsRef.current = 0
+        worldSpeedRef.current = 0
+        maxWorldRef.current = 0
+        indexXYZRef.current = null
+        last.current = null
+        lastWorld.current = null
 
         // WASM とモデルをCDNからロード
         const vision = await FilesetResolver.forVisionTasks(
