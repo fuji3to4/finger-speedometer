@@ -3,6 +3,8 @@ Finger Speedometer (MediaPipe Hands)
 
 人差し指の先（ランドマーク #8）の速度を計測して表示するミニアプリです。MediaPipe Tasks (HandLandmarker) を使用し、カメラ映像上に手のランドマークと速度HUDを重畳表示します。
 
+[https://fuji3to4.github.io/finger-speedometer/]
+
 機能
 
 - カメラプレビュー + ランドマーク描画
