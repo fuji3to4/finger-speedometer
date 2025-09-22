@@ -260,7 +260,7 @@ export default function FingerSpeed() {
                     ctx.lineTo(txA, tyA)
                     ctx.lineWidth = 4
                     ctx.strokeStyle = "#9b5de5" // acceleration: purple
-                    ctx.setLineDash([8, 6])
+                    // ctx.setLineDash([8, 6])
                     ctx.stroke()
                     ctx.setLineDash([])
                     // 矢印ヘッド
@@ -422,7 +422,7 @@ export default function FingerSpeed() {
                     >
                         Reset Highscore
                     </button>
-                    <label className="inline-flex items-center gap-2 select-none text-[#e6ecff] ml-2">
+                    <label className="inline-flex items-center gap-2 select-none text-[#304ba5] ml-2">
                         <input
                             type="checkbox"
                             checked={mirror}
@@ -441,7 +441,7 @@ export default function FingerSpeed() {
                     />
                 </div>
 
-                <div className="flex items-center gap-4 text-[#e6ecff]">
+                <div className="flex items-center gap-4 text-[#304ba5]">
                     <label className="inline-flex items-center gap-2 select-none">
                         <input
                             type="checkbox"
