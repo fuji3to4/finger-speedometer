@@ -11,6 +11,7 @@ type XYZ = { x: number; y: number; z: number }
 
 const FPS_SMOOTH = 0.25 // EMA smoothing for fps estimate
 const VEL_SMOOTH = 0.3 // EMA smoothing for 2D velocity (screen space)
+const ACC_SMOOTH = 0.35 // EMA smoothing for 2D acceleration (screen space)
 const ARROW_TIME = 0.08 // seconds of motion represented by arrow length
 const ARROW_MIN = 6 // px
 const ARROW_MAX = 160 // px
@@ -30,10 +31,20 @@ export default function FingerSpeed() {
     // UI/state
     const [running, setRunning] = useState(false)
     const [mirror, setMirror] = useState(false)
+    const [showVelocity, setShowVelocity] = useState(true)
+    const [showAcceleration, setShowAcceleration] = useState(true)
     const mirrorRef = useRef(false)
+    const showVelRef = useRef(true)
+    const showAccRef = useRef(true)
     useEffect(() => {
         mirrorRef.current = mirror
     }, [mirror])
+    useEffect(() => {
+        showVelRef.current = showVelocity
+    }, [showVelocity])
+    useEffect(() => {
+        showAccRef.current = showAcceleration
+    }, [showAcceleration])
 
     // フレーム毎に更新される値は state ではなく ref に保持（再レンダ不要）
     const fpsRef = useRef(0)
@@ -43,10 +54,13 @@ export default function FingerSpeed() {
     const indexXYZRef = useRef<XYZ | null>(null)
     // 2D スクリーン空間の速度ベクトル（px/s）
     const vel2DRef = useRef<{ vx: number; vy: number }>({ vx: 0, vy: 0 })
+    // 2D スクリーン空間の加速度ベクトル（px/s^2）
+    const acc2DRef = useRef<{ ax: number; ay: number }>({ ax: 0, ay: 0 })
 
     // 前フレーム情報
     const last = useRef<{ t: number; x: number; y: number; z: number } | null>(null)
     const lastWorld = useRef<{ t: number; x: number; y: number; z: number } | null>(null)
+    const lastVelRef = useRef<{ t: number; vx: number; vy: number } | null>(null)
 
     const detectLoop = useCallback(() => {
         const canvas = canvasRef.current
@@ -158,21 +172,36 @@ export default function FingerSpeed() {
             ctx.strokeStyle = "#21d19f"
             ctx.stroke()
 
-            // 2D 速度ベクトル（px/s）を算出・平滑化
+            // 2D 速度ベクトル（px/s）を算出・平滑化 + 加速度算出
             if (prev) {
                 const dt2 = (now - prev.t) / 1000
                 if (dt2 > 0) {
-                    const vx = ((p.x - prev.x) * canvas.width) / dt2
-                    const vy = ((p.y - prev.y) * canvas.height) / dt2
-                    vel2DRef.current.vx =
-                        vel2DRef.current.vx * (1 - VEL_SMOOTH) + vx * VEL_SMOOTH
-                    vel2DRef.current.vy =
-                        vel2DRef.current.vy * (1 - VEL_SMOOTH) + vy * VEL_SMOOTH
+                    const rawVx = ((p.x - prev.x) * canvas.width) / dt2
+                    const rawVy = ((p.y - prev.y) * canvas.height) / dt2
+                    // 平滑化した速度
+                    const newVx = vel2DRef.current.vx * (1 - VEL_SMOOTH) + rawVx * VEL_SMOOTH
+                    const newVy = vel2DRef.current.vy * (1 - VEL_SMOOTH) + rawVy * VEL_SMOOTH
+                    // 加速度（平滑化速度の時間微分）
+                    const prevV = lastVelRef.current
+                    if (prevV) {
+                        const dtv = (now - prevV.t) / 1000
+                        if (dtv > 0) {
+                            const ax = (newVx - prevV.vx) / dtv
+                            const ay = (newVy - prevV.vy) / dtv
+                            acc2DRef.current.ax =
+                                acc2DRef.current.ax * (1 - ACC_SMOOTH) + ax * ACC_SMOOTH
+                            acc2DRef.current.ay =
+                                acc2DRef.current.ay * (1 - ACC_SMOOTH) + ay * ACC_SMOOTH
+                        }
+                    }
+                    vel2DRef.current.vx = newVx
+                    vel2DRef.current.vy = newVy
+                    lastVelRef.current = { t: now, vx: newVx, vy: newVy }
                 }
             }
 
-            // 矢印で速度ベクトルを可視化
-            {
+            // 矢印で速度ベクトルを可視化（表示切替対応）
+            if (showVelRef.current) {
                 const { vx, vy } = vel2DRef.current
                 let dx = vx * ARROW_TIME
                 let dy = vy * ARROW_TIME
@@ -191,7 +220,8 @@ export default function FingerSpeed() {
                     ctx.moveTo(cx, cy)
                     ctx.lineTo(tx, ty)
                     ctx.lineWidth = 4
-                    ctx.strokeStyle = "#ff5e5b"
+                    ctx.strokeStyle = "#ff5e5b" // velocity: red
+                    ctx.setLineDash([])
                     ctx.stroke()
                     // 矢印ヘッド
                     const angle = Math.atan2(dy, dx)
@@ -207,8 +237,49 @@ export default function FingerSpeed() {
                     ctx.stroke()
                 }
             }
+
+            // 矢印で加速度ベクトルを可視化（表示切替対応）
+            if (showAccRef.current) {
+                const { ax, ay } = acc2DRef.current
+                // 加速度は距離に直結しないため、T秒で生じる変位 0.5*a*T^2 に対応させる
+                let dxA = 0.5 * ax * ARROW_TIME * ARROW_TIME
+                let dyA = 0.5 * ay * ARROW_TIME * ARROW_TIME
+                let lenA = Math.hypot(dxA, dyA)
+                if (lenA >= ARROW_MIN) {
+                    if (lenA > ARROW_MAX) {
+                        const k = ARROW_MAX / lenA
+                        dxA *= k
+                        dyA *= k
+                        lenA = ARROW_MAX
+                    }
+                    const txA = cx + dxA
+                    const tyA = cy + dyA
+                    // 本体（破線・紫）
+                    ctx.beginPath()
+                    ctx.moveTo(cx, cy)
+                    ctx.lineTo(txA, tyA)
+                    ctx.lineWidth = 4
+                    ctx.strokeStyle = "#9b5de5" // acceleration: purple
+                    ctx.setLineDash([8, 6])
+                    ctx.stroke()
+                    ctx.setLineDash([])
+                    // 矢印ヘッド
+                    const angleA = Math.atan2(dyA, dxA)
+                    const headA = 12
+                    const a1A = angleA + Math.PI * 0.85
+                    const a2A = angleA - Math.PI * 0.85
+                    ctx.beginPath()
+                    ctx.moveTo(txA, tyA)
+                    ctx.lineTo(txA + Math.cos(a1A) * headA, tyA + Math.sin(a1A) * headA)
+                    ctx.moveTo(txA, tyA)
+                    ctx.lineTo(txA + Math.cos(a2A) * headA, tyA + Math.sin(a2A) * headA)
+                    ctx.lineWidth = 3
+                    ctx.stroke()
+                }
+            }
         } else {
             last.current = null
+            lastVelRef.current = null
         }
         // ミラー変換を解除してから HUD を描画
         ctx.restore()
@@ -246,12 +317,15 @@ export default function FingerSpeed() {
         ctxRef.current = canvas.getContext("2d")
 
         // 開始時にメトリクスをリセット
-        fpsRef.current = 0
-        worldSpeedRef.current = 0
-        maxWorldRef.current = 0
-        indexXYZRef.current = null
-        last.current = null
-        lastWorld.current = null
+    fpsRef.current = 0
+    worldSpeedRef.current = 0
+    maxWorldRef.current = 0
+    indexXYZRef.current = null
+    vel2DRef.current = { vx: 0, vy: 0 }
+    acc2DRef.current = { ax: 0, ay: 0 }
+    last.current = null
+    lastWorld.current = null
+    lastVelRef.current = null
 
         // WASM とモデルをCDNからロード
         const vision = await FilesetResolver.forVisionTasks(
@@ -365,6 +439,27 @@ export default function FingerSpeed() {
                         ref={canvasRef}
                         className="w-full rounded-2xl shadow-[0_8px_24px_rgba(0,0,0,0.35)]"
                     />
+                </div>
+
+                <div className="flex items-center gap-4 text-[#e6ecff]">
+                    <label className="inline-flex items-center gap-2 select-none">
+                        <input
+                            type="checkbox"
+                            checked={showVelocity}
+                            onChange={(e) => setShowVelocity(e.target.checked)}
+                            className="accent-[#ff5e5b] h-4 w-4"
+                        />
+                        速度ベクトル
+                    </label>
+                    <label className="inline-flex items-center gap-2 select-none">
+                        <input
+                            type="checkbox"
+                            checked={showAcceleration}
+                            onChange={(e) => setShowAcceleration(e.target.checked)}
+                            className="accent-[#9b5de5] h-4 w-4"
+                        />
+                        加速度ベクトル
+                    </label>
                 </div>
 
                 <p className="opacity-80">
