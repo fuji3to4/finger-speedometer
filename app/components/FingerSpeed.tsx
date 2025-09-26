@@ -20,6 +20,7 @@ export default function FingerSpeed() {
     const videoRef = useRef<HTMLVideoElement | null>(null)
     const canvasRef = useRef<HTMLCanvasElement | null>(null)
     const ctxRef = useRef<CanvasRenderingContext2D | null>(null)
+    const stageRef = useRef<HTMLDivElement | null>(null)
 
     // MediaPipe / runtime
     const landmarkerRef = useRef<HandLandmarker | null>(null)
@@ -30,6 +31,8 @@ export default function FingerSpeed() {
 
     // UI/state
     const [running, setRunning] = useState(false)
+    const [isFullscreen, setIsFullscreen] = useState(false)
+    const [isPseudoFullscreen, setIsPseudoFullscreen] = useState(false)
     const [mirror, setMirror] = useState(false)
     const [showVelocity, setShowVelocity] = useState(true)
     const [showAcceleration, setShowAcceleration] = useState(true)
@@ -45,6 +48,26 @@ export default function FingerSpeed() {
     useEffect(() => {
         showAccRef.current = showAcceleration
     }, [showAcceleration])
+
+    // Fullscreen change listener
+    useEffect(() => {
+        const onFsChange = () => {
+            const fs = Boolean(document.fullscreenElement)
+            setIsFullscreen(fs)
+            if (!fs) {
+                // ネイティブFSが解除されたら疑似も解除
+                setIsPseudoFullscreen(false)
+            }
+        }
+        document.addEventListener("fullscreenchange", onFsChange)
+        return () => document.removeEventListener("fullscreenchange", onFsChange)
+    }, [])
+
+    // 背景スクロール抑止（全画面中）
+    useEffect(() => {
+        const lock = isFullscreen || isPseudoFullscreen
+        document.body.classList.toggle("no-scroll", lock)
+    }, [isFullscreen, isPseudoFullscreen])
 
     // フレーム毎に更新される値は state ではなく ref に保持（再レンダ不要）
     const fpsRef = useRef(0)
@@ -69,6 +92,16 @@ export default function FingerSpeed() {
         const landmarker = landmarkerRef.current
         if (!canvas || !ctx || !video || !landmarker) return
 
+        // videoフレームがまだ用意できていない場合は次フレームへ
+        if (
+            video.readyState < 2 /* HAVE_CURRENT_DATA */ ||
+            video.videoWidth === 0 ||
+            video.videoHeight === 0
+        ) {
+            rafRef.current = requestAnimationFrame(detectLoop)
+            return
+        }
+
         // canvas サイズ同期
         if (
             canvas.width !== video.videoWidth ||
@@ -89,7 +122,15 @@ export default function FingerSpeed() {
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
 
         const now = performance.now()
-        const result = landmarker.detectForVideo(video, now)
+        let result: ReturnType<HandLandmarker['detectForVideo']> | undefined
+        try {
+            result = landmarker.detectForVideo(video, now)
+        } catch (e) {
+            // eslint-disable-next-line no-console
+            console.warn('[HandLandmarker] detectForVideo failed:', e)
+            rafRef.current = requestAnimationFrame(detectLoop)
+            return
+        }
         const lm: NormalizedLandmark[] | undefined = result.landmarks?.[0]
         const wlm: { x: number; y: number; z: number }[] | undefined = result.worldLandmarks?.[0]
 
@@ -108,7 +149,7 @@ export default function FingerSpeed() {
             lastLogRef.current = now
         }
 
-    if (lm && lm[8]) {
+        if (lm && lm[8]) {
             // ランドマーク描画
             if (!drawingRef.current) drawingRef.current = new DrawingUtils(ctx)
             try {
@@ -317,15 +358,15 @@ export default function FingerSpeed() {
         ctxRef.current = canvas.getContext("2d")
 
         // 開始時にメトリクスをリセット
-    fpsRef.current = 0
-    worldSpeedRef.current = 0
-    maxWorldRef.current = 0
-    indexXYZRef.current = null
-    vel2DRef.current = { vx: 0, vy: 0 }
-    acc2DRef.current = { ax: 0, ay: 0 }
-    last.current = null
-    lastWorld.current = null
-    lastVelRef.current = null
+        fpsRef.current = 0
+        worldSpeedRef.current = 0
+        maxWorldRef.current = 0
+        indexXYZRef.current = null
+        vel2DRef.current = { vx: 0, vy: 0 }
+        acc2DRef.current = { ax: 0, ay: 0 }
+        last.current = null
+        lastWorld.current = null
+        lastVelRef.current = null
 
         // WASM とモデルをCDNからロード
         const vision = await FilesetResolver.forVisionTasks(
@@ -398,9 +439,50 @@ export default function FingerSpeed() {
         }
     }, [stop])
 
+    // Fullscreen controls
+    const enterFullscreen = useCallback(async () => {
+        const el = stageRef.current
+        if (!el) return
+        try {
+            if (el.requestFullscreen) {
+                await el.requestFullscreen()
+                return
+            }
+        } catch {
+            // fallthrough to pseudo or video native
+        }
+        // iOSなど古い環境: video のネイティブFS、または疑似FS
+        const v: any = videoRef.current
+        if (v && typeof v.webkitEnterFullscreen === "function") {
+            try {
+                v.webkitEnterFullscreen()
+                return
+            } catch {
+                // ignore
+            }
+        }
+        setIsPseudoFullscreen(true)
+    }, [])
+
+    const exitFullscreen = useCallback(async () => {
+        setIsPseudoFullscreen(false)
+        if (document.fullscreenElement) {
+            try {
+                await document.exitFullscreen()
+            } catch {
+                // ignore
+            }
+        }
+    }, [])
+
+    const toggleFullscreen = useCallback(() => {
+        if (isFullscreen || isPseudoFullscreen) exitFullscreen()
+        else enterFullscreen()
+    }, [isFullscreen, isPseudoFullscreen, enterFullscreen, exitFullscreen])
+
     return (
         <>
-            <div className="grid gap-3">
+            <div className={`grid gap-3`}>
                 <div className="flex items-center gap-3">
                     <button
                         onClick={init}
@@ -416,11 +498,31 @@ export default function FingerSpeed() {
                     >
                         Stop Camera
                     </button>
+
                     <button
                         onClick={reset}
                         className="py-2 px-3.5 rounded-xl border border-[#2a3358] bg-[#172041] text-[#e6ecff]"
                     >
                         Reset Highscore
+                    </button>
+
+                    <button
+                        onClick={toggleFullscreen}
+                        aria-label={isFullscreen || isPseudoFullscreen ? "Exit fullscreen" : "Enter fullscreen"}
+                        className="py-2 px-3.5 rounded-xl border border-[#2a3358] bg-[#172041] text-[#e6ecff] flex items-center justify-center"
+                        title={isFullscreen || isPseudoFullscreen ? "Exit fullscreen" : "Fullscreen"}
+                    >
+                        {isFullscreen || isPseudoFullscreen ? (
+                            // Exit fullscreen icon
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                                <path d="M10 4H4v6M14 4h6v6M10 20H4v-6M20 14v6h-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                            </svg>
+                        ) : (
+                            // Enter fullscreen icon
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                                <path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                            </svg>
+                        )}
                     </button>
                     <label className="inline-flex items-center gap-2 select-none text-[#304ba5] ml-2">
                         <input
@@ -432,13 +534,29 @@ export default function FingerSpeed() {
                         Mirror
                     </label>
                 </div>
-
-                <div className="relative w-full max-w-[960px]">
-                    <video ref={videoRef} autoPlay playsInline muted className="hidden" />
+                <div
+                    ref={stageRef}
+                    className={`relative w-full max-w-[960px] media-stage ${
+                        isPseudoFullscreen ? "pseudo-fullscreen" : ""
+                    } ${(isFullscreen || isPseudoFullscreen) ? "is-fullscreen" : ""}`}
+                >
+                    <video ref={videoRef} autoPlay playsInline muted className="camera-video-hidden" />
                     <canvas
                         ref={canvasRef}
-                        className="w-full rounded-2xl shadow-[0_8px_24px_rgba(0,0,0,0.35)]"
+                        className={`${(isFullscreen || isPseudoFullscreen) ? "max-w-full max-h-full" : "w-full"} rounded-2xl shadow-[0_8px_24px_rgba(0,0,0,0.35)]`}
                     />
+                    {(isFullscreen || isPseudoFullscreen) && (
+                        <button
+                            aria-label="Exit fullscreen"
+                            onClick={exitFullscreen}
+                            className="absolute top-3 right-3 z-10 p-2 rounded-lg bg-[rgba(0,0,0,0.6)] text-white border border-white/30 flex items-center justify-center"
+                            title="Close"
+                        >
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                                <path d="M6 6l12 12M6 18L18 6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                            </svg>
+                        </button>
+                    )}
                 </div>
 
                 <div className="flex items-center gap-4 text-[#304ba5]">

@@ -11,6 +11,7 @@ Finger Speedometer (MediaPipe Hands)
 - worldLandmarks を用いた 3D 空間上の速度 [m/s] 推定（人差し指先端）
 - 最高速度の記録
 - Start / Stop / Reset ボタン
+- 映像の全画面表示トグル（ネイティブFS + フォールバック）
 
 要件
 
@@ -61,6 +62,22 @@ GitHub Pages（自動デプロイ）
 - 初回はブラウザからカメラアクセス許可が求められます
 - 照明や背景コントラストが低いと検出が不安定になります
 - worldLandmarks の絶対スケールはカメラ環境に依存します（相対比較に有用）
+
+モバイル向けの最適化と全画面について
+
+- 見切れ対策
+  - `app/globals.css` に `min-h-100svh`, `safe-p`, `media-stage` を追加し、アドレスバーの表示変化で高さがズレないよう `svh` を使用（未対応ブラウザは `vh` フォールバック）。
+  - メディア要素（img, video, canvas）は `max-width: 100%` とし、はみ出しを防止。
+  - ステージの最大高さを `calc(100svh - 180px)` に制限し、コントロールが重ならないよう調整。
+
+- 全画面の使い方
+  - 「Fullscreen」ボタンで、カメラ映像領域（ステージ）を全画面に切り替えられます。
+  - 対応ブラウザではネイティブ Fullscreen API を使用、未対応の場合はビデオのネイティブ全画面（iOS: `webkitEnterFullscreen`）または疑似全画面でカバーします。
+  - 全画面中は右上の「Close」で解除できます。
+
+- 互換性メモ
+  - iOS < 16 では `overscroll-behavior` が使えないため、採用していません。必要に応じて `body` のスクロールロック（`.no-scroll`）で代替しています。
+  - Tailwind v4 の inline theme を利用しているため、CSS ツールのリンタが `@theme` を未知アトルールとして警告する場合がありますが、ビルドには問題ありません。
 
 主なファイル
 
