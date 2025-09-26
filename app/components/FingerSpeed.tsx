@@ -138,7 +138,6 @@ export default function FingerSpeed() {
         if (now - lastLogRef.current > logIntervalMs) {
             // ここでMediaPipeの生の出力を覗く
             // NOTE: 出力量が多くなるので間引いています
-            // eslint-disable-next-line no-console
             console.log("[HandLandmarker]", {
                 time: now.toFixed(1),
                 videoSize: { w: video.videoWidth, h: video.videoHeight },
@@ -391,7 +390,6 @@ export default function FingerSpeed() {
         if (video.readyState < 2 || video.videoWidth === 0) {
             await new Promise<void>((resolve) => {
                 const onMeta = () => {
-                    // eslint-disable-next-line no-console
                     console.log("[Video] metadata loaded", video.videoWidth, video.videoHeight)
                     video.removeEventListener("loadedmetadata", onMeta)
                     resolve()
@@ -400,7 +398,6 @@ export default function FingerSpeed() {
             })
         }
         await video.play()
-        // eslint-disable-next-line no-console
         console.log("[Camera] started")
 
         setRunning(true)
@@ -452,7 +449,7 @@ export default function FingerSpeed() {
             // fallthrough to pseudo or video native
         }
         // iOSなど古い環境: video のネイティブFS、または疑似FS
-        const v: any = videoRef.current
+        const v = videoRef.current as (HTMLVideoElement & { webkitEnterFullscreen?: () => void }) | null
         if (v && typeof v.webkitEnterFullscreen === "function") {
             try {
                 v.webkitEnterFullscreen()
