@@ -61,6 +61,8 @@ export default function FingerSpeed() {
     const last = useRef<{ t: number; x: number; y: number; z: number } | null>(null)
     const lastWorld = useRef<{ t: number; x: number; y: number; z: number } | null>(null)
     const lastVelRef = useRef<{ t: number; vx: number; vy: number } | null>(null)
+    // detectForVideo に渡すタイムスタンプは単調増加が必須
+    const lastTsRef = useRef(0)
 
     const detectLoop = useCallback(() => {
         const canvas = canvasRef.current
@@ -86,10 +88,38 @@ export default function FingerSpeed() {
             ctx.translate(canvas.width, 0)
             ctx.scale(-1, 1)
         }
+        // video のフレーム準備が不十分な場合は次フレームへ（Safari/一部環境対策）
+        if (video.readyState < 2 || video.videoWidth === 0 || video.videoHeight === 0) {
+            ctx.restore()
+            ctx.restore()
+            rafRef.current = requestAnimationFrame(detectLoop)
+            return
+        }
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
 
-        const now = performance.now()
-        const result = landmarker.detectForVideo(video, now)
+        // Video の現在フレームの時間（ms）。単調増加を保証
+        let now = video.currentTime * 1000
+        if (!Number.isFinite(now) || now <= lastTsRef.current) {
+            now = Math.max(performance.now(), lastTsRef.current + 1)
+        }
+        lastTsRef.current = now
+
+        // MediaPipe 実行は念のため try/catch（内部例外の可視化）
+        let result: ReturnType<HandLandmarker["detectForVideo"]>
+        try {
+            result = landmarker.detectForVideo(video, now)
+        } catch (err) {
+            // eslint-disable-next-line no-console
+            console.error("[HandLandmarker] detectForVideo error", err, {
+                now,
+                readyState: video.readyState,
+                size: { w: video.videoWidth, h: video.videoHeight },
+            })
+            ctx.restore()
+            ctx.restore()
+            rafRef.current = requestAnimationFrame(detectLoop)
+            return
+        }
         const lm: NormalizedLandmark[] | undefined = result.landmarks?.[0]
         const wlm: { x: number; y: number; z: number }[] | undefined = result.worldLandmarks?.[0]
 
@@ -108,7 +138,7 @@ export default function FingerSpeed() {
             lastLogRef.current = now
         }
 
-    if (lm && lm[8]) {
+        if (lm && lm[8]) {
             // ランドマーク描画
             if (!drawingRef.current) drawingRef.current = new DrawingUtils(ctx)
             try {
@@ -317,15 +347,15 @@ export default function FingerSpeed() {
         ctxRef.current = canvas.getContext("2d")
 
         // 開始時にメトリクスをリセット
-    fpsRef.current = 0
-    worldSpeedRef.current = 0
-    maxWorldRef.current = 0
-    indexXYZRef.current = null
-    vel2DRef.current = { vx: 0, vy: 0 }
-    acc2DRef.current = { ax: 0, ay: 0 }
-    last.current = null
-    lastWorld.current = null
-    lastVelRef.current = null
+        fpsRef.current = 0
+        worldSpeedRef.current = 0
+        maxWorldRef.current = 0
+        indexXYZRef.current = null
+        vel2DRef.current = { vx: 0, vy: 0 }
+        acc2DRef.current = { ax: 0, ay: 0 }
+        last.current = null
+        lastWorld.current = null
+        lastVelRef.current = null
 
         // WASM とモデルをCDNからロード
         const vision = await FilesetResolver.forVisionTasks(
@@ -402,20 +432,11 @@ export default function FingerSpeed() {
         <>
             <div className="grid gap-3">
                 <div className="flex items-center gap-3">
-                    <button
-                        onClick={init}
-                        disabled={running}
-                        className="py-2 px-3.5 rounded-xl border border-[#2a3358] bg-[#172041] text-[#e6ecff]"
-                    >
-                        {running ? "Running…" : "Start Camera"}
-                    </button>
-                    <button
-                        onClick={stop}
-                        disabled={!running}
-                        className="py-2 px-3.5 rounded-xl border border-[#2a3358] bg-[#172041] text-[#e6ecff]"
-                    >
-                        Stop Camera
-                    </button>
+                    {!running ? (
+                        <button className="py-2 px-3.5 rounded-xl border bg-blue-500 hover:bg-blue-400 text-white" onClick={init}>Start Camera</button>
+                    ) : (
+                        <button className="py-2 px-3.5 rounded-xl border bg-red-500 hover:bg-red-400 text-white" onClick={stop}>Stop Camera</button>
+                    )}
                     <button
                         onClick={reset}
                         className="py-2 px-3.5 rounded-xl border border-[#2a3358] bg-[#172041] text-[#e6ecff]"
