@@ -301,8 +301,8 @@ export default function FingerSpeed() {
                     ctx.lineWidth = 4
                     ctx.strokeStyle = "#9b5de5" // acceleration: purple
                     // ctx.setLineDash([8, 6])
-                    ctx.setLineDash([])
                     ctx.stroke()
+                    ctx.setLineDash([])
                     // 矢印ヘッド
                     const angleA = Math.atan2(dyA, dxA)
                     const headA = 12
